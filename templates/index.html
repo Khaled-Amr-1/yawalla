@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yawalla - Network Monitor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { background-color: #f5f7fa; color: #333333; }
+        .glass-panel { background: #ffffff; border: 1px solid #eaedf1; border-radius: 8px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05); }
+        .dropdown-content { display: none; }
+        .dropdown-content.show { display: block; }
+    </style>
+</head>
+<body class="font-sans min-h-screen p-6">
+
+    <div class="max-w-4xl mx-auto glass-panel p-8">
+        <!-- Header & Filters -->
+        <div class="flex justify-between items-center mb-10 border-b border-gray-100 pb-4 relative">
+            
+            <!-- Date Dropdown  -->
+            <div class="relative">
+                <button onclick="toggleDropdown('date-dropdown')" class="bg-white hover:bg-gray-50 px-4 py-2 rounded border border-gray-200 shadow-sm flex items-center gap-2 transition-colors text-gray-700 font-medium">
+                    <span id="date-btn-text">Today</span>
+                    <span class="text-xs text-gray-400">▼</span>
+                </button>
+                <div id="date-dropdown" class="dropdown-content absolute left-0 mt-2 w-64 bg-white border border-gray-200 rounded shadow-lg z-10 overflow-hidden">
+                    <button onclick="selectDateMode('today')" class="w-full text-left px-4 py-2 hover:bg-gray-50 transition-colors text-gray-700">Today</button>
+                    <button onclick="selectDateMode('custom')" class="w-full text-left px-4 py-2 hover:bg-gray-50 transition-colors border-b border-gray-100 text-gray-700">Custom Date</button>
+                    
+                    <div id="custom-dates" class="hidden p-3 space-y-3 bg-gray-50">
+                        <div>
+                            <label class="text-xs text-gray-500 font-medium">From:</label>
+                            <input type="date" id="start-date" class="w-full bg-white border border-gray-200 rounded p-1.5 text-sm text-gray-700 mt-1 focus:outline-none focus:border-blue-400">
+                        </div>
+                        <div>
+                            <label class="text-xs text-gray-500 font-medium">To:</label>
+                            <input type="date" id="end-date" class="w-full bg-white border border-gray-200 rounded p-1.5 text-sm text-gray-700 mt-1 focus:outline-none focus:border-blue-400">
+                        </div>
+                        <button onclick="applyCustomDate()" class="w-full bg-blue-500 hover:bg-blue-600 text-white py-1.5 rounded text-sm font-semibold shadow-sm">Apply</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="absolute left-1/2 transform -translate-x-1/2 pointer-events-none">
+                <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-pink-500 tracking-wider">
+                    YaWalla
+                </h1>
+            </div>
+
+            <!-- Networks Dropdown  -->
+            <div class="relative">
+                <button onclick="toggleDropdown('network-dropdown')" class="bg-white hover:bg-gray-50 px-4 py-2 rounded border border-gray-200 shadow-sm flex items-center gap-2 transition-colors text-gray-700 font-medium">
+                    <span id="network-btn-text">🌐 Networks</span>
+                    <span class="text-xs text-gray-400">▼</span>
+                </button>
+                <div id="network-dropdown" class="dropdown-content absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded shadow-lg p-3 z-10">
+                    <div id="networks-list" class="space-y-2 max-h-48 overflow-y-auto">
+                        <!-- Checkboxes will be loaded here -->
+                    </div>
+                    <button onclick="applyFilters()" class="mt-3 w-full bg-blue-500 hover:bg-blue-600 text-white py-1.5 rounded text-sm font-semibold shadow-sm">Apply</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Center Chart Section -->
+        <div class="flex flex-col items-center justify-center mb-12">
+            <div class="flex items-center justify-center gap-12 w-full">
+                <!-- Total Download  -->
+                <div class="text-center">
+                    <div class="text-amber-500 text-sm font-semibold tracking-wider mb-1 uppercase">Download</div>
+                    <div class="text-amber-500 text-xl font-bold">↓ <span id="lbl-down">0 B</span></div>
+                </div>
+
+                <!-- Doughnut -->
+                <div class="relative w-48 h-48">
+                    <canvas id="doughnutChart"></canvas>
+                    <div class="absolute inset-0 flex items-center justify-center flex-col">
+                        <span id="lbl-total" class="text-2xl font-bold text-gray-800">0 B</span>
+                    </div>
+                </div>
+
+                <!-- Total Upload  -->
+                <div class="text-center">
+                    <div class="text-pink-500 text-sm font-semibold tracking-wider mb-1 uppercase">Upload</div>
+                    <div class="text-pink-500 text-xl font-bold">↑ <span id="lbl-up">0 B</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Apps List Section -->
+        <div id="appsList" class="space-y-4">
+            <!-- App rows will be generated here -->
+        </div>
+    </div>
+
+    <script>
+        let doughnutChart = null;
+        let activeBssids = [];
+        let currentMode = 'today';
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function toggleDropdown(id) {
+            document.querySelectorAll('.dropdown-content').forEach(el => {
+                if (el.id !== id) el.classList.remove('show');
+            });
+            document.getElementById(id).classList.toggle('show');
+        }
+
+        window.onclick = function(event) {
+            if (!event.target.closest('.relative')) {
+                document.querySelectorAll('.dropdown-content').forEach(el => el.classList.remove('show'));
+            }
+        }
+
+        function selectDateMode(mode) {
+            currentMode = mode;
+            const customDatesDiv = document.getElementById('custom-dates');
+            if (mode === 'today') {
+                customDatesDiv.classList.add('hidden');
+                document.getElementById('date-btn-text').innerText = 'Today';
+                document.getElementById('date-dropdown').classList.remove('show');
+                applyFilters(); 
+            } else if (mode === 'custom') {
+                customDatesDiv.classList.remove('hidden');
+            }
+        }
+
+        function applyCustomDate() {
+            document.getElementById('date-btn-text').innerText = 'Custom';
+            document.getElementById('date-dropdown').classList.remove('show');
+            applyFilters();
+        }
+
+        async function initData() {
+            const netRes = await fetch('/api/networks');
+            const networks = await netRes.json();
+            
+            const container = document.getElementById('networks-list');
+            container.innerHTML = '';
+            
+            networks.forEach(net => {
+                container.innerHTML += `
+                    <label class="flex items-center space-x-2 text-sm cursor-pointer hover:bg-gray-50 p-1.5 rounded transition-colors text-gray-700">
+                        <input type="checkbox" value="${net.bssid}" class="net-checkbox rounded border-gray-300 text-blue-500 focus:ring-0" checked>
+                        <span>${net.ssid}</span>
+                    </label>
+                `;
+            });
+
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('start-date').value = today;
+            document.getElementById('end-date').value = today;
+
+            applyFilters();
+            setInterval(applyFilters, 10000);
+        }
+
+        function applyFilters() {
+            document.querySelectorAll('.dropdown-content').forEach(el => el.classList.remove('show'));
+            
+            const checkboxes = document.querySelectorAll('.net-checkbox:checked');
+            activeBssids = Array.from(checkboxes).map(cb => cb.value);
+
+            let start = '', end = '';
+            if(currentMode === 'today') {
+                const today = new Date().toISOString().split('T')[0];
+                start = today; end = today;
+            } else {
+                start = document.getElementById('start-date').value;
+                end = document.getElementById('end-date').value;
+            }
+
+            fetchTraffic(start, end, activeBssids);
+        }
+
+        async function fetchTraffic(startDate, endDate, bssids) {
+            if (bssids.length === 0) {
+                updateCenterChart(0, 0, 0);
+                updateAppsList([]);
+                return;
+            }
+
+            let url = `/api/traffic?start_date=${startDate}&end_date=${endDate}`;
+            bssids.forEach(b => url += `&bssids[]=${encodeURIComponent(b)}`);
+
+            const res = await fetch(url);
+            const data = await res.json();
+            
+            updateCenterChart(data.total_download, data.total_upload, data.grand_total);
+            updateAppsList(data.apps);
+        }
+
+        function updateCenterChart(down, up, total) {
+            document.getElementById('lbl-down').innerText = formatBytes(down);
+            document.getElementById('lbl-up').innerText = formatBytes(up);
+            document.getElementById('lbl-total').innerText = formatBytes(total);
+
+            const ctx = document.getElementById('doughnutChart').getContext('2d');
+            
+            if (doughnutChart) {
+                doughnutChart.data.datasets[0].data = [down, up];
+                doughnutChart.update();
+                return;
+            }
+
+            doughnutChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Download', 'Upload'],
+                    datasets: [{
+                        data: [down, up],
+                        backgroundColor: ['rgba(245, 158, 11, 0.8)', 'rgba(236, 72, 153, 0.8)'],
+                        borderColor: ['rgba(245, 158, 11, 1)', 'rgba(236, 72, 153, 1)'],
+                        borderWidth: 1,
+                        cutout: '80%'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, tooltip: { enabled: true } },
+                    animation: { animateScale: true }
+                }
+            });
+        }
+
+        function updateAppsList(apps) {
+            const container = document.getElementById('appsList');
+            container.innerHTML = '';
+
+            if (apps.length === 0) {
+                container.innerHTML = '<p class="text-center text-gray-400 mt-8 font-medium">No traffic data recorded.</p>';
+                return;
+            }
+
+            const maxTotal = apps[0].total; 
+
+            apps.forEach(app => {
+                const containerWidth = (app.total / maxTotal) * 100;
+                const downPercent = (app.download / app.total) * 100;
+                const upPercent = (app.upload / app.total) * 100;
+
+                container.innerHTML += `
+                    <div class="flex items-center gap-4 group hover:bg-gray-50 p-2 rounded transition-colors">
+                        <div class="w-24 text-right text-sm font-semibold truncate text-gray-700" title="${app.program}">${app.program}</div>
+                        
+                        <div class="flex-1 flex items-center h-3 bg-gray-100 rounded-full overflow-hidden shadow-inner">
+                            <div class="flex h-full transition-all duration-1000 ease-out" style="width: ${containerWidth}%;">
+                                <!-- البارات بألوان Glasswire -->
+                                <div class="bg-amber-400 h-full" style="width: ${downPercent}%" title="Down: ${formatBytes(app.download)}"></div>
+                                <div class="bg-pink-400 h-full" style="width: ${upPercent}%" title="Up: ${formatBytes(app.upload)}"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="w-20 text-left text-sm text-gray-500 font-mono font-medium">${formatBytes(app.total)}</div>
+                    </div>
+                `;
+            });
+        }
+
+        window.onload = initData;
+    </script>
+</body>
+</html>
